@@ -1,18 +1,15 @@
 import { connectDatabase, disconnectDatabase } from '../config/database.js';
 import { Activity, Team, User, Workout } from '../models/index.js';
+import { setUserTeam } from '../services/membership.js';
 
 // Seed stable demo records without clearing data owned by the application.
 async function upsertDemoUser(name: string, email: string, teamId: InstanceType<typeof Team>['_id'], fitnessGoal: string) {
-  const previousUser = await User.findOne({ email }).select('_id team');
-  if (previousUser?.team && previousUser.team.toString() !== teamId.toString()) {
-    await Team.updateOne({ _id: previousUser.team }, { $pull: { members: previousUser._id } });
-  }
   const user = await User.findOneAndUpdate(
     { email },
-    { $set: { name, email, team: teamId, fitnessGoal } },
+    { $set: { name, email, fitnessGoal } },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
-  await Team.updateOne({ _id: teamId }, { $addToSet: { members: user._id } });
+  await setUserTeam(user._id, teamId);
   return user;
 }
 

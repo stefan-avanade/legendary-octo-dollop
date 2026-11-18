@@ -33,20 +33,25 @@ Record your plan here before editing code.
 - Presentation tier decision: Keep capability components in `octofit-tracker/frontend/src/components` presentational. They fetch through the shared client in `src/api/client.ts` using relative `/api` paths and render loading, error (`role="alert"`), and empty states. They contain no ordering, ranking, or suggestion logic.
 - Logic tier decision: Keep `routes/api.ts` thin. Business rules live in `services/octofitService.ts`. Validation failures throw errors with a `status` of 400 or 404, which the existing error path returns. No authentication is added.
 - Data tier decision: Enforce required fields with Mongoose schema validators in `src/models`. References use ObjectId types. Seed data must satisfy the same validators. Aggregation and lookup queries stay in the service layer, not in the models.
-- Activity tracking approach: Reject malformed `userId` or `teamId` with 400 (`Types.ObjectId.isValid`). Reject well-formed IDs that match no record with 404. Compute `points` from `type` and `minutes` in the service, and set `occurredAt` to the current time.
+- Activity tracking approach: Reject malformed `userId` or `teamId` with 400. Use a 24-character hex check (`/^[a-f\d]{24}$/i`) rather than `Types.ObjectId.isValid`, which also accepts any 12-character string. Reject well-formed IDs that match no record with 404. Compute `points` from `type` and `minutes` in the service, and set `occurredAt` to the current time.
 - Team management approach: Reject a missing `name` with 400. Store `name`, `mascot`, and `members` as submitted. List teams unchanged.
+- Data integrity decisions: `User.email` is unique, valid, lowercased, and trimmed; `User.team` is required; `User.fitnessGoal` is `endurance`, `strength`, or `mobility`. `Team.name` is unique and trimmed. `Activity.type` is one of `run`, `cycle`, `strength`, `walk`; `Activity.minutes` is 1–1440; `Activity.points` ≥ 0; `Activity.occurredAt` cannot be more than 5 minutes in the future. `Workout.title` is required; `Workout.difficulty` is `easy`, `moderate`, or `hard`. `Activity.team` is a snapshot of the user's team at creation. `User.team` is the source of truth for membership, and `Team.members` mirrors it through `setUserTeam` in `src/services/membership.ts`.
+- Team mismatch decision: when an activity's `teamId` differs from the user's current team, `POST /api/activities` rejects with 400. Implement this with the endpoint.
 - Leaderboard approach: Aggregate activity points by team, join the team name, sort by `totalPoints` descending with `teamName` ascending as the tie-breaker, and assign a 1-based `rank` by position.
 - Workout suggestions approach: Look up the user by email and return 404 if none matches. Derive `focus` from the user's `fitnessGoal`, falling back to the most frequent recent activity type. Return the first suggestion with `focus`, `title`, and a `reason`.
+- Implementation order: (1) data-tier validators, since seed data must still pass; (2) logic-tier endpoints in the order team creation, activity creation, leaderboard, workout suggestions; (3) frontend error and empty states, which can proceed in parallel with steps 1–2 because the component tests stub `fetch`; (4) the workouts component, once the suggestions response shape from step 2 is settled; (5) builds.
 
 ## Test plan
 
-Record the commands you run and what each failure means.
+Record the commands you run and what each failure means. Results below are from the starter baseline, before any implementation.
 
 - Data-tier command: `npm run test:data --prefix octofit-tracker/backend`
-  - Baseline: 4 of 5 fail. `expected undefined to be defined` means a required validator is missing on that model.
+  - Baseline: 4 of 5 fail (1 passes: seeding is idempotent). `expected undefined to be defined` means a required validator is missing on that model. The four failing tests map to `User`, `Team`, `Activity`, and `Workout`.
 - API command: `npm run test:api --prefix octofit-tracker/backend`
-  - Baseline: 4 of 4 fail. `expected 501 to be 400` means the create-endpoint stub is still in place. `expected [] to deeply equal` on the leaderboard means `getLeaderboard` is still a stub. A workout mismatch means `suggestWorkouts` ignores the user.
+  - Baseline: 4 of 4 fail. `expected 501 to be 400` means the create-endpoint stub is still in place. `expected [] to deeply equal` on the leaderboard means `getLeaderboard` is still a stub. A workout mismatch means `suggestWorkouts` ignores the user: it returns no `reason` and the wrong data.
 - Frontend command: `npm test --prefix octofit-tracker/frontend -- --run`
   - Baseline: 15 of 15 fail. `Unable to find role="alert"` means the error state is missing. `Unable to find ... no activities/teams/...` means the empty state is missing. `Implementation pending` means the workout component is still a stub.
-- Backend build command: `npm run build --prefix octofit-tracker/backend` (not yet run)
-- Frontend build command: `npm run build --prefix octofit-tracker/frontend` (not yet run)
+- Backend build command: `npm run build --prefix octofit-tracker/backend`
+  - Baseline: passes (`tsc --noEmit`). A type error here after a model or service change means the contract types drifted.
+- Frontend build command: `npm run build --prefix octofit-tracker/frontend`
+  - Baseline: passes (`tsc --noEmit && vite build`). The build output goes to `dist/`, which is gitignored.
