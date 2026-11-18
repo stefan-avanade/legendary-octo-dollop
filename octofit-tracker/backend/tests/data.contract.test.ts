@@ -12,6 +12,48 @@ describe('OctoFit data contract', () => {
     expect(error?.errors.email).toBeDefined();
     expect(error?.errors.fitnessGoal).toBeDefined();
   });
+  it('normalizes user emails to lowercase and trimmed values', () => {
+    const user = new User({ email: '  Mona@Example.com ' });
+    expect(user.email).toBe('mona@example.com');
+  });
+  it('rejects duplicate user emails and team names', async () => {
+    const mongo = await MongoMemoryServer.create();
+    try {
+      await mongoose.connect(mongo.getUri());
+      await Promise.all([User.init(), Team.init()]);
+      const octocats = await Team.create({ name: 'Octocats', mascot: 'Mona' });
+      await expect(Team.create({ name: ' Octocats ', mascot: 'Mona' })).rejects.toMatchObject({ code: 11000 });
+      await User.create({ name: 'Mona', email: 'mona@example.com', team: octocats._id, fitnessGoal: 'endurance' });
+      await expect(User.create({ name: 'Mona Two', email: ' MONA@example.com', team: octocats._id, fitnessGoal: 'mobility' })).rejects.toMatchObject({ code: 11000 });
+    } finally {
+      await mongoose.disconnect();
+      await mongo.stop();
+    }
+  }, 60_000);
+  it('rejects non-positive activity minutes, negative points, and unknown activity types', () => {
+    const base = { user: new mongoose.Types.ObjectId(), team: new mongoose.Types.ObjectId(), occurredAt: new Date() };
+    const error = new Activity({ ...base, type: 'swim', minutes: 0, points: -5 }).validateSync();
+    expect(error?.errors.type).toBeDefined();
+    expect(error?.errors.minutes).toBeDefined();
+    expect(error?.errors.points).toBeDefined();
+    expect(new Activity({ ...base, type: 'run', minutes: 1, points: 0 }).validateSync()).toBeUndefined();
+  });
+  it('requires workout titles and known difficulty levels', () => {
+    const error = new Workout({ focus: 'strength', minutes: 30, difficulty: 'brutal' }).validateSync();
+    expect(error?.errors.title).toBeDefined();
+    expect(error?.errors.difficulty).toBeDefined();
+  });
+  it('validates email format, goal values, and activity bounds and dates', () => {
+    const user = new User({ name: 'Mona', email: 'not-an-email', team: new mongoose.Types.ObjectId(), fitnessGoal: 'speed' });
+    const userError = user.validateSync();
+    expect(userError?.errors.email).toBeDefined();
+    expect(userError?.errors.fitnessGoal).toBeDefined();
+    expect(new User({ name: 'Mona', email: 'mona@example.com', team: new mongoose.Types.ObjectId(), fitnessGoal: 'strength' }).validateSync()).toBeUndefined();
+
+    const base = { user: new mongoose.Types.ObjectId(), team: new mongoose.Types.ObjectId(), type: 'run', points: 10 };
+    expect(new Activity({ ...base, minutes: 1441, occurredAt: new Date('2026-01-01T12:00:00.000Z') }).validateSync()?.errors.minutes).toBeDefined();
+    expect(new Activity({ ...base, minutes: 30, occurredAt: new Date(Date.now() + 60 * 60 * 1000) }).validateSync()?.errors.occurredAt).toBeDefined();
+  });
   it('requires teams to have a name, mascot, and members array', () => {
     const team = new Team({ name: 'Octocats', mascot: 'Mona', members: [] });
     expect(team.validateSync()).toBeUndefined();
